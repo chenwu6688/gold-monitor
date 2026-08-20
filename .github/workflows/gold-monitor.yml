@@ -1,0 +1,51 @@
+name: 黄金价格监测
+
+# 定时触发：跑在 GitHub 服务器上，关掉自己电脑也照常运行
+on:
+  schedule:
+    # 每 15 分钟运行一次（GitHub 用 UTC，但频率与北京时间一致）
+    # 频率取舍：
+    #   */10  → 最及时（private 仓库可能超免费额度，建议 public 仓库）
+    #   */15  → 默认（private 月度约略超 2000 分钟免费额度，小额或设 public）
+    #   */30  → 最省，稳在免费额度内（到价提醒最多延迟 30 分钟）
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}   # 允许在 Actions 页面手动点一下测试
+
+permissions:
+  contents: write        # 需要写回 state.json（穿越检测状态持久化）
+
+concurrency:
+  group: gold-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run gold monitor (once)
+        env:
+          WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
+          WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
+          TARGET_PRICES: ${{ vars.TARGET_PRICES }}
+        run: python gold_monitor.py --once
+
+      - name: Commit state (persist crossing-detection state)
+        if: always()
+        run: |
+          git config user.name "gold-bot"
+          git config user.email "gold-bot@users.noreply.github.com"
+          git add state.json 2>/dev/null || true
+          git commit -m "chore: update gold monitor state" || echo "no state change"
+          git push

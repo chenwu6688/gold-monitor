@@ -1,0 +1,13 @@
+{
+  "target_prices": [880.0, 900.0],
+  "target_price": 950.0,
+  "threshold_pct": 0.01,
+  "hit_pct": 0.001,
+  "normal_interval": 7200,
+  "high_freq_interval": 600,
+  "wecom_webhook": "",
+  "pushplus_token": "",
+  "wxpusher_app_token": "AT_替换为你的WxPusher应用token",
+  "wxpusher_uids": ["UID_替换为你的接收UID"],
+  "quiet_normal": false
+}
