@@ -42,6 +42,8 @@ jobs:
           CMB_TARGET_PRICES: ${{ vars.CMB_TARGET_PRICES }}
           CMB_SPREAD: ${{ vars.CMB_SPREAD }}
           CMB_TARGET_PRICES_SELL: ${{ vars.CMB_TARGET_PRICES_SELL }}
+          CMB_GOLD_LABEL: ${{ vars.CMB_GOLD_LABEL }}
+          CMB_ACCOUNT_LABEL: ${{ vars.CMB_ACCOUNT_LABEL }}
         run: python gold_monitor.py --once
 
       - name: Commit state (persist crossing-detection state)

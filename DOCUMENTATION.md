@@ -199,6 +199,8 @@ python3 gold_monitor.py --loop
 - 编辑 `CMB_TARGET_PRICES`（招行纸黄金目标，不配则沿用 `TARGET_PRICES`）
 - 编辑 `CMB_SPREAD`（招行点差偏移，默认 2.5 = 实测点差 5元/克 ÷ 2）
 - 编辑 `CMB_TARGET_PRICES_SELL`（招行纸黄金【卖出组】目标，如 `1000`；空 = 不监测卖出）
+- 编辑 `CMB_GOLD_LABEL`（买入/卖出价前缀，默认 `招行黄金`；监测别行改 `工行黄金`/`建行黄金` 等）
+- 编辑 `CMB_ACCOUNT_LABEL`（基准行账户名，默认 `黄金账户`；改 `积存金`/`账户贵金属` 等对应不同产品名）
 → Save。下次运行自动生效。
 
 **方式 B（改代码）**：编辑 `config.json` 的 `target_prices` / `cmb_target_prices` / `cmb_target_prices_sell` / `cmb_spread` 字段，提交推送（需本机 SSH）。
@@ -294,6 +296,8 @@ TARGET_PRICES=970 python3 gold_monitor.py --once
 | `cmb_target_prices` | `[880, 900]` | 招行纸黄金 目标（元/克），缺省沿用 `target_prices` |
 | `cmb_spread` | `2.5` | 招行点差偏移（元/克）：基准 Au99.99 ± 此值 = 招行买卖双价 |
 | `cmb_target_prices_sell` | `[]` | 招行纸黄金【卖出组】目标（元/克）：用卖出价触发"涨到卖出"提醒；空 = 不监测卖出 |
+| `cmb_gold_label` | `"招行黄金"` | 买入/卖出价前缀（可改 `工行黄金`/`建行黄金` 等，对应不同银行产品） |
+| `cmb_account_label` | `"黄金账户"` | 基准行账户名（可改 `积存金`/`账户贵金属` 等，对应不同银行产品名） |
 | `quiet_normal` | `false` | 平时层是否静默 |
 
 ## 附录 B：环境变量覆盖（GitHub Actions 注入）
@@ -306,6 +310,8 @@ TARGET_PRICES=970 python3 gold_monitor.py --once
 | `CMB_TARGET_PRICES` | Variables（可选） | `cmb_target_prices`（招行纸黄金目标） |
 | `CMB_SPREAD` | Variables（可选） | `cmb_spread`（招行点差偏移） |
 | `CMB_TARGET_PRICES_SELL` | Variables（可选） | `cmb_target_prices_sell`（招行卖出组目标） |
+| `CMB_GOLD_LABEL` | Variables（可选） | `cmb_gold_label`（买入/卖出价前缀） |
+| `CMB_ACCOUNT_LABEL` | Variables（可选） | `cmb_account_label`（基准行账户名） |
 | `TARGET_PRICE` | Variables（可选） | `target_price` |
 | `WECHAT_WEBHOOK` | Secrets（可选） | `wecom_webhook` |
 | `PUSHPLUS_TOKEN` | Secrets（可选） | `pushplus_token` |

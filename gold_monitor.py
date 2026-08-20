@@ -60,6 +60,8 @@ DEFAULT_CONFIG = {
     "cmb_target_prices": [880.0, 900.0], # 招行纸黄金【买入组】目标（跌破买入价提醒，元/克）
     "cmb_target_prices_sell": [],        # 招行纸黄金【卖出组】目标（涨到卖出价提醒，元/克；空=不监测卖出）
     "cmb_spread": 2.5,                   # 招行黄金账户点差偏移（元/克）= 实测点差(5元)/2
+    "cmb_gold_label": "招行黄金",        # 买入/卖出价前缀（可改成工行黄金/建行黄金等，对应不同银行产品）
+    "cmb_account_label": "黄金账户",      # 基准行账户名（可改成积存金/账户贵金属等）
     "threshold_pct": 0.01,               # 距任一目标 1% 内 → 进入高频采样层
     "hit_pct": 0.001,                    # 视为"到达"的容差带（0.1%）
     "normal_interval": 7200,             # 平时采样间隔（秒）= 2 小时
@@ -93,6 +95,10 @@ def load_config():
         cfg["cmb_target_prices_sell"] = [float(x.strip()) for x in os.environ["CMB_TARGET_PRICES_SELL"].split(",") if x.strip()]
     if os.environ.get("CMB_SPREAD"):                         # → 招行点差
         cfg["cmb_spread"] = float(os.environ["CMB_SPREAD"])
+    if os.environ.get("CMB_GOLD_LABEL"):                     # → 买入/卖出价前缀
+        cfg["cmb_gold_label"] = os.environ["CMB_GOLD_LABEL"]
+    if os.environ.get("CMB_ACCOUNT_LABEL"):                  # → 基准行账户名
+        cfg["cmb_account_label"] = os.environ["CMB_ACCOUNT_LABEL"]
     if os.environ.get("TARGET_PRICE"):
         cfg["target_price"] = float(os.environ["TARGET_PRICE"])
     if os.environ.get("WECHAT_WEBHOOK"):
@@ -126,7 +132,7 @@ def build_assets(cfg):
             "name": "国内金价 (SGE Au99.99)",
             "source": "sge",
             "mode": "single",
-            "groups": [{"label": "目标", "side": "price", "suffix": "", "targets": [float(t) for t in cfg["target_prices"]]}],
+            "groups": [{"label": "目标", "side": "buy", "suffix": "", "targets": [float(t) for t in cfg["target_prices"]]}],
             "spread": 0.0,
         },
         {
@@ -139,6 +145,8 @@ def build_assets(cfg):
                 {"label": "卖出价目标(涨到卖出)", "side": "sell", "suffix": "sell", "targets": [float(t) for t in cfg["cmb_target_prices_sell"]]},
             ],
             "spread": cfg["cmb_spread"],
+            "gold_label": cfg["cmb_gold_label"],        # 买入/卖出价前缀（可改银行名）
+            "account_label": cfg["cmb_account_label"],  # 基准行账户名（可改产品名）
         },
     ]
 
@@ -346,6 +354,21 @@ def _compute_groups(asset, raw_price):
     return out
 
 
+def _reach_line(t, dist, reached, side="buy", indent=0):
+    """目标距离行。reached=True 时在文末追加彩色字体 buy/sale 标注方向。
+    side="buy"  → 价格已跌破目标(到价买入)  → 绿色 buy
+    side="sell" → 价格已涨到目标(到价卖出)  → 红色 sale
+    排版：未到价 = `距 t：dist%`；到价 = `距 t：dist% **已到价(可买/卖)** <color>tag`
+    """
+    pad = "    " * indent
+    if not reached:
+        return f"{pad}距 {t:.2f}：{dist:+.2f}%"
+    color = "green" if side == "buy" else "red"
+    tag = "buy" if side == "buy" else "sale"
+    label = "已到价(可买入)" if side == "buy" else "已到价(可卖出)"
+    return f"{pad}距 {t:.2f}：{dist:+.2f}% **{label}** <font color=\"{color}\">{tag}</font>"
+
+
 def build_asset_content(asset, raw_price, date, results, cfg):
     """results: [(group, analyze_result, monitor_price, buy, sell), ...]"""
     if asset["mode"] == "single":
@@ -354,23 +377,28 @@ def build_asset_content(asset, raw_price, date, results, cfg):
         if a["change"] is not None:
             lines.append(f"- 较上次：{a['change']:+.2f} 元（{a['change_pct']:+.2f}%）")
         for t in g["targets"]:
-            lines.append(f"- 距目标 {t:.2f}：{a['dists'][t]:+.2f}%")
+            reached = (mp <= t) if g["side"] == "buy" else (mp >= t)
+            lines.append(_reach_line(t, a["dists"][t], reached, side=g["side"]))
         lines.append(f"- 采样层：{a['layer']}（下次间隔 {a['interval']}s）")
         return "\n".join(lines)
 
     # dual：展示买卖双价 + 每组目标距离
     _, _, _, buy, sell = results[0]
+    gl = asset.get("gold_label", "")            # 买入/卖出价前缀（如「招行黄金」）
+    al = asset.get("account_label", "黄金账户")  # 基准行账户名（如「黄金账户」）
+    prefix = f"{gl} " if gl else ""
     lines = [
-        f"- **{asset['name']}** 基准 Au99.99：**{raw_price:.2f}** 元/克（{date}）",
-        f"- **买入价（银行卖你=你买入成本）**：**{buy:.2f}** 元/克",
-        f"- 卖出价（银行买你=你卖出回收）：{sell:.2f} 元/克",
+        f"- **{al}** 基准 Au99.99：**{raw_price:.2f}** 元/克（{date}）",
+        f"- **{prefix}买入价（银行卖你=你买入成本）**：**{buy:.2f}** 元/克",
+        f"- {prefix}卖出价（银行买你=你卖出回收）：{sell:.2f} 元/克",
     ]
     any_band = False
     for g, a, mp, _, _ in results:
         side_label = "买入价" if g["side"] == "buy" else "卖出价"
         lines.append(f"- **{g['label']}**（{side_label}监测）：")
         for t in g["targets"]:
-            lines.append(f"    - 距 {t:.2f}：{a['dists'][t]:+.2f}%")
+            reached = (mp <= t) if g["side"] == "buy" else (mp >= t)
+            lines.append(_reach_line(t, a["dists"][t], reached, side=g["side"], indent=1))
         any_band = any_band or a["any_in_band"]
     layer = "高频" if any_band else "平时"
     interval = min((a["interval"] for g, a, mp, _, _ in results), default=cfg["normal_interval"])
