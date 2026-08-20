@@ -5,7 +5,7 @@
 ==============================================
 
 监测资产：
-  1. 招行纸黄金 (黄金账户)           —— 基准 = 国际现货黄金(伦敦金)换算人民币/克 + 升贴水自动校准，
+  1. 招行纸黄金 (黄金账户)           —— 基准 = 国际现货黄金(伦敦金)换算人民币/克（直接采用，不加升贴水），
                                        再 ± 点差偏移得到买卖双价（双向目标）。国际现货 24h 连续交易，
                                        解决上金所 Au99.99 下午/夜间闭市后基准价冻结失真的问题。
 
@@ -18,9 +18,7 @@
   4. 穿越检测：价格上穿/下穿某目标只提醒一次；状态持久化，云函数无状态也可工作。
   5. 基准价口径（买卖双价）：
        - 主基准：国际现货黄金(伦敦金 XAU/USD，新浪 hf_XAU) × 美元人民币汇率(fx_susdcny) ÷ 31.1035
-         = 人民币/克。24h 连续交易，覆盖招行纸黄金真实波动时段(周一07:00-周六04:00)。
-       - 升贴水校准：交易时段内自动学习「招行 Au99.99 − 国际换算值」并持久化(state.json __meta__)，
-         闭市后沿用最近一次校准值，保证白天基准 ≈ Au99.99、夜间跟随国际盘跳动。
+         = 人民币/克（直接采用，不加升贴水）。24h 连续交易，覆盖招行纸黄金真实波动时段(周一07:00-周六04:00)。
        - 招行纸黄金(黄金账户)没有独立公开实时行情接口，其报价 ≈ 基准 + 招行点差。
          实测招行黄金账户点差约 5 元/克（买入价 973.18 / 卖出价 968.18，App 实测），
          故 基准+2.5 ≈ 招行「实时买入价」(银行卖你=你的买入成本)，
@@ -64,7 +62,6 @@ DEFAULT_CONFIG = {
     "cmb_target_prices": [880.0, 900.0], # 招行纸黄金【买入组】目标（跌破买入价提醒，元/克）
     "cmb_target_prices_sell": [],        # 招行纸黄金【卖出组】目标（涨到卖出价提醒，元/克；空=不监测卖出）
     "cmb_spread": 2.5,                   # 招行黄金账户点差偏移（元/克）= 实测点差(5元)/2
-    "intl_premium": None,                # 国际换算基准的升贴水校准（元/克）；None=自动学习 Au99.99−国际换算
     "cmb_gold_label": "招行黄金",        # 买入/卖出价前缀（可改成工行黄金/建行黄金等，对应不同银行产品）
     "cmb_account_label": "黄金账户",      # 基准行账户名（可改成积存金/账户贵金属等）
     "threshold_pct": 0.01,               # 距任一目标 1% 内 → 进入高频采样层
@@ -104,8 +101,6 @@ def load_config():
         cfg["cmb_gold_label"] = os.environ["CMB_GOLD_LABEL"]
     if os.environ.get("CMB_ACCOUNT_LABEL"):                  # → 基准行账户名
         cfg["cmb_account_label"] = os.environ["CMB_ACCOUNT_LABEL"]
-    if os.environ.get("INTL_PREMIUM"):                       # → 国际升贴水校准(手动)
-        cfg["intl_premium"] = float(os.environ["INTL_PREMIUM"])
     if os.environ.get("TARGET_PRICE"):
         cfg["target_price"] = float(os.environ["TARGET_PRICE"])
     if os.environ.get("WECHAT_WEBHOOK"):
@@ -267,41 +262,20 @@ SOURCE_MAP = {
 def fetch_base_price(asset, cfg):
     """获取资产基准价（元/克）。返回 (raw_price, date, extra)。
 
-    - source=="intl"（主数据源）：取国际现货换算价，叠加升贴水校准 premium。
-      premium 自动学习：仅在 Au99.99 行情活跃（时间戳变化）时更新
-      premium = Au99.99 − 国际换算，避免闭市冻结价污染校准；闭市沿用上次值。
-      手动配置 intl_premium 可覆盖自动学习。
-      extra 内含 国内 Au99.99 参考价、当前 premium、国际换算价。
+    - source=="intl"（主数据源）：直接用国际现货换算价（伦敦金×汇率÷31.1035）作基准，
+      不叠加任何升贴水校准。extra 内含国内 Au99.99 参考价（仅供对比）。
     - 其他 source：原逻辑，extra 为空 dict。
     """
     src = asset["source"]
     if src == "intl":
         intl_price, intl_time = get_intl_gold_price()
-        premium = cfg.get("intl_premium")          # 手动配置优先（None=自动）
-        if premium is None:
-            premium = _meta.get("premium", 0.0)
         extra_au = None
         try:
-            au99, au_time = get_cmb_base_price()   # 国内 Au99.99（白天活跃/闭市冻结）
-            extra_au = au99
-            # 仅在 Au99.99 价格实际变动时重学升贴水（闭市时价格冻结 → 沿用上次校准，
-            # 防止招行接口时间戳刷新导致 premium 被持续重学、基准被拉回冻结价）
-            last_au = _meta.get("last_au9999")
-            if last_au is None or abs(au99 - last_au) > 0.005:
-                new_premium = round(au99 - intl_price, 2)
-                if abs(new_premium) <= 20:         # 合理范围防脏数据
-                    premium = new_premium
-                    _meta.update({
-                        "premium": premium,
-                        "last_au9999": au99,
-                        "last_au9999_time": au_time,
-                        "premium_updated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    })
+            extra_au, _ = get_cmb_base_price()     # 国内 Au99.99（仅供参考对比）
         except Exception:
             pass                                   # 招行接口失败不影响国际基准
-        raw = round(intl_price + premium, 2)
-        extra = {"intl": round(intl_price, 2), "au9999": extra_au,
-                 "premium": round(premium, 2), "intl_time": intl_time}
+        raw = round(intl_price, 2)
+        extra = {"intl": round(intl_price, 2), "au9999": extra_au, "intl_time": intl_time}
         return raw, intl_time, extra
     raw, date = SOURCE_MAP[src]()
     return raw, date, {}
@@ -312,7 +286,7 @@ def fetch_base_price(asset, cfg):
 # 持久化到文件，使云函数（无状态、每次新进程）也能跨调用检测穿越。
 # ----------------------------------------------------------------------------
 analyze_prev_sides = {}
-_meta = {}   # 运行时元数据：升贴水校准 premium、最近 Au99.99 及其时间戳（存 state.json 的 __meta__ 键）
+_meta = {}   # 运行时元数据（存 state.json 的 __meta__ 键，预留扩展）
 
 
 def reset_state():
@@ -470,7 +444,7 @@ def _reach_line(t, dist, reached, side="buy", indent=0):
 
 def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
     """results: [(group, analyze_result, monitor_price, buy, sell), ...]
-    extra: fetch_base_price 返回的附加信息（国际基准的 intl/au9999/premium 等）。"""
+    extra: fetch_base_price 返回的附加信息（国际基准的 intl/au9999 等）。"""
     extra = extra or {}
     if asset["mode"] == "single":
         g, a, mp, _, _ = results[0]
@@ -488,13 +462,9 @@ def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
     gl = asset.get("gold_label", "")            # 买入/卖出价前缀（如「招行黄金」）
     al = asset.get("account_label", "黄金账户")  # 基准行账户名（如「黄金账户」）
     prefix = f"{gl} " if gl else ""
-    lines = [f"- **{al}** 基准（国际现货+校准）：**{raw_price:.2f}** 元/克（{date}）"]
-    if extra.get("premium") is not None:
-        pm = extra["premium"]
-        if extra.get("au9999") is not None:
-            lines.append(f"- 国内参考 Au99.99：{extra['au9999']:.2f} 元/克（升贴水 {pm:+.2f}）")
-        else:
-            lines.append(f"- 升贴水校准 {pm:+.2f}（国内 Au99.99 暂不可用）")
+    lines = [f"- **{al}** 基准（国际现货）：**{raw_price:.2f}** 元/克（{date}）"]
+    if extra.get("au9999") is not None:
+        lines.append(f"- 国内参考 Au99.99：{extra['au9999']:.2f} 元/克")
     lines += [
         f"- **{prefix}买入价（银行卖你=你买入成本）**：**{buy:.2f}** 元/克",
         f"- {prefix}卖出价（银行买你=你卖出回收）：{sell:.2f} 元/克",
@@ -526,7 +496,7 @@ def _hit_suffix(g, a):
 # 主循环（本地常驻）
 # ----------------------------------------------------------------------------
 def run_loop(cfg):
-    load_state()                       # 读回穿越状态 + 升贴水校准(__meta__)
+    load_state()                       # 读回穿越状态(_meta 预留)
     assets = build_assets(cfg)
     print(f"启动黄金监测 | 资产: {[a.get('display_label', a['name']) for a in assets]} | "
           f"平时 {cfg['normal_interval']}s / 高频 {cfg['high_freq_interval']}s")
@@ -566,7 +536,7 @@ def run_loop(cfg):
 # 单次运行（云函数每次触发调用一次）
 # ----------------------------------------------------------------------------
 def run_once(cfg, save=True):
-    load_state()                       # 读回穿越状态 + 升贴水校准(__meta__)
+    load_state()                       # 读回穿越状态(_meta 预留)
     assets = build_assets(cfg)
     for asset in assets:
         try:
