@@ -1,5 +1,9 @@
 {
   "target_prices": [880.0, 900.0],
+  "cmb_target_prices": [880.0, 900.0],
+  "cmb_target_prices_sell": [],
+  "cmb_spread": 2.5,
+  "cmb_monitor_side": "buy",
   "target_price": 950.0,
   "threshold_pct": 0.01,
   "hit_pct": 0.001,
