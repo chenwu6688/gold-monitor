@@ -54,6 +54,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 STATE_PATH = os.path.join(BASE_DIR, "state.json")   # 穿越检测状态（云函数可改到 /tmp 或 COS）
 
+PUSH_TITLE = "国内金价实时行情"   # 统一推送标题名称（📊 播报 / ⚠️ 到达目标位 共用）
+
 DEFAULT_CONFIG = {
     "target_prices": [880.0, 900.0],     # 国内金价 (SGE Au99.99) 目标（元/克）
     "target_price": 950.0,               # 单目标兼容（多目标优先）
@@ -125,19 +127,16 @@ def build_assets(cfg):
       - side: "price"(单一价) / "buy"(用买入价) / "sell"(用卖出价)
       - suffix: 用于 state key 区分不同组
       - targets: 该组目标价位列表
+
+    当前只保留【招行纸黄金(黄金账户)】资产：其基准价即上金所 Au99.99（国内金价），
+    买入/卖出双价 + 两组目标一次播报，避免与单一国内金价消息内容重复。
+    如需恢复单一国内金价资产，把 sge_au9999 条目加回本列表即可。
     """
     return [
         {
-            "key": "sge_au9999",
-            "name": "国内金价 (SGE Au99.99)",
-            "source": "sge",
-            "mode": "single",
-            "groups": [{"label": "目标", "side": "buy", "suffix": "", "targets": [float(t) for t in cfg["target_prices"]]}],
-            "spread": 0.0,
-        },
-        {
             "key": "cmb_paper_gold",
             "name": "招行纸黄金 (黄金账户)",
+            "display_label": cfg["cmb_account_label"],   # 日志用账户名（如「黄金账户」）
             "source": "cmb",
             "mode": "dual",
             "groups": [
@@ -420,7 +419,7 @@ def _hit_suffix(g, a):
 # ----------------------------------------------------------------------------
 def run_loop(cfg):
     assets = build_assets(cfg)
-    print(f"启动黄金监测 | 资产: {[a['name'] for a in assets]} | "
+    print(f"启动黄金监测 | 资产: {[a.get('display_label', a['name']) for a in assets]} | "
           f"平时 {cfg['normal_interval']}s / 高频 {cfg['high_freq_interval']}s")
     prev = {}   # key: f"{asset_key}:{suffix}" -> 上次监测价
     while True:
@@ -429,7 +428,7 @@ def run_loop(cfg):
             try:
                 raw_price, date = SOURCE_MAP[asset["source"]]()
             except Exception as e:
-                print(f"[warn][{asset['name']}] 取数失败，跳过本轮: {e}")
+                print(f"[warn][{asset.get('display_label', asset['name'])}] 取数失败，跳过本轮: {e}")
                 intervals.append(cfg["normal_interval"])
                 continue
             results = []
@@ -445,9 +444,9 @@ def run_loop(cfg):
             hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
             if hit_parts:
                 suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
-                push(cfg, f"⚠️ {asset['name']} 到达目标位", content + suffix)
+                push(cfg, f"⚠️ {PUSH_TITLE} 到达目标位", content + suffix)
             elif not cfg.get("quiet_normal", False):
-                push(cfg, f"📊 {asset['name']} 播报", content)
+                push(cfg, f"📊 {PUSH_TITLE} 播报", content)
             for g, a, mp, _, _ in results:
                 intervals.append(a["interval"])
         save_state()
@@ -463,7 +462,7 @@ def run_once(cfg, save=True):
         try:
             raw_price, date = SOURCE_MAP[asset["source"]]()
         except Exception as e:
-            print(f"[warn][{asset['name']}] 取数失败，跳过: {e}")
+            print(f"[warn][{asset.get('display_label', asset['name'])}] 取数失败，跳过: {e}")
             continue
         results = []
         for g, mp, buy, sell in _compute_groups(asset, raw_price):
@@ -476,9 +475,9 @@ def run_once(cfg, save=True):
         hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
         if hit_parts:
             suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
-            push(cfg, f"⚠️ {asset['name']} 到达目标位（单次）", content + suffix)
+            push(cfg, f"⚠️ {PUSH_TITLE} 到达目标位（单次）", content + suffix)
         else:
-            push(cfg, f"📊 {asset['name']} 播报（单次）", content)
+            push(cfg, f"📊 {PUSH_TITLE} 播报（单次）", content)
     if save:
         save_state()
 
