@@ -54,7 +54,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 STATE_PATH = os.path.join(BASE_DIR, "state.json")   # 穿越检测状态（云函数可改到 /tmp 或 COS）
 
-PUSH_TITLE = "国内金价实时行情"   # 统一推送标题名称（📊 播报 / ⚠️ 到达目标位 共用）
+PUSH_TITLE = "金价监测"   # 统一推送标题名称（📊 播报 / ⚠️ 到达目标位 共用）
+                          # 原名"国内金价实时行情"与内容不符：正文主体是国际现货换算价，
+                          # 只有"国内参考 Au99.99"那一行才是国内报价。
 
 DEFAULT_CONFIG = {
     "target_prices": [880.0, 900.0],     # 国内金价 (SGE Au99.99) 目标（元/克）
@@ -449,10 +451,22 @@ def _reach_line(t, dist, reached, side="buy", indent=0):
     return f"{pad}距 {t:.2f}：{dist:+.2f}% **{label}** <font color=\"{color}\">{tag}</font>"
 
 
-def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
+def build_asset_content(asset, raw_price, date, results, cfg, extra=None, show_sampling=True):
     """results: [(group, analyze_result, monitor_price, buy, sell), ...]
-    extra: fetch_base_price 返回的附加信息（国际基准的 intl/au9999 等）。"""
+    extra: fetch_base_price 返回的附加信息（国际基准的 intl/au9999 等）。
+    show_sampling: 是否输出"采样层/下次间隔"。--once 与 Actions 下 cron 定频，
+                   这个间隔值不会被执行，显示出来只会误导，故关掉。"""
     extra = extra or {}
+
+    def _last_line():
+        """较上次涨跌。跨进程运行时上一次价格存在 _meta 里。"""
+        last = _meta.get("last_base") or {}
+        p0 = last.get("p")
+        if not p0:
+            return []
+        d = raw_price - p0
+        return [f"- 较上次（{last.get('t', '?')}）：{d:+.2f} 元（{d / p0 * 100:+.2f}%）"]
+
     if asset["mode"] == "single":
         g, a, mp, _, _ = results[0]
         lines = [f"- **{asset['name']}**：**{mp:.2f}** 元/克（{date}）"]
@@ -461,7 +475,8 @@ def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
         for t in g["targets"]:
             reached = (mp <= t) if g["side"] == "buy" else (mp >= t)
             lines.append(_reach_line(t, a["dists"][t], reached, side=g["side"]))
-        lines.append(f"- 采样层：{a['layer']}（下次间隔 {a['interval']}s）")
+        if show_sampling:
+            lines.append(f"- 采样层：{a['layer']}（下次间隔 {a['interval']}s）")
         return "\n".join(lines)
 
     # dual：展示基准 + 国内参考 + 买卖双价 + 每组目标距离
@@ -470,6 +485,7 @@ def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
     al = asset.get("account_label", "黄金账户")  # 基准行账户名（如「黄金账户」）
     prefix = f"{gl} " if gl else ""
     lines = [f"- **{al}** 基准（国际现货）：**{raw_price:.2f}** 元/克（{date}）"]
+    lines += _last_line()
     if extra.get("au9999") is not None:
         lines.append(f"- 国内参考 Au99.99：{extra['au9999']:.2f} 元/克")
     lines += [
@@ -484,9 +500,10 @@ def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
             reached = (mp <= t) if g["side"] == "buy" else (mp >= t)
             lines.append(_reach_line(t, a["dists"][t], reached, side=g["side"], indent=1))
         any_band = any_band or a["any_in_band"]
-    layer = "高频" if any_band else "平时"
-    interval = min((a["interval"] for g, a, mp, _, _ in results), default=cfg["normal_interval"])
-    lines.append(f"- 采样层：{layer}（下次间隔 {interval}s）")
+    if show_sampling:
+        layer = "高频" if any_band else "平时"
+        interval = min((a["interval"] for g, a, mp, _, _ in results), default=cfg["normal_interval"])
+        lines.append(f"- 采样层：{layer}（下次间隔 {interval}s）")
     return "\n".join(lines)
 
 
@@ -575,6 +592,7 @@ def run_loop(cfg):
                 intervals.append(cfg["normal_interval"])
                 continue
             content = build_asset_content(asset, raw_price, date, results, cfg, extra)
+            _meta["last_base"] = {"p": raw_price, "t": time.strftime("%m-%d %H:%M")}
             hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
             if hit_parts:
                 suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
@@ -607,7 +625,10 @@ def run_once(cfg, save=True):
             results.append((g, a, mp, buy, sell))
         if not results:
             continue
-        content = build_asset_content(asset, raw_price, date, results, cfg, extra)
+        content = build_asset_content(asset, raw_price, date, results, cfg, extra,
+                                      show_sampling=False)
+        # 记下本次基准价，供下次运行算"较上次涨跌"（跨进程靠 state.json 的 __meta__）
+        _meta["last_base"] = {"p": raw_price, "t": time.strftime("%m-%d %H:%M")}
         hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
         if hit_parts:
             suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
