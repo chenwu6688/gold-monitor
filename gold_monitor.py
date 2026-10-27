@@ -436,6 +436,19 @@ def _compute_groups(asset, raw_price):
     return out
 
 
+def _gc_stale_targets(asset):
+    """清掉本资产下已不在当前配置里的目标位状态。
+
+    改过目标价之后，旧 key（如 buy:880.0 / sell:1500.0）不该永久留在 state.json 里：
+    文件只增不减，看 state 会误以为还在监测旧价位。空目标组（如未配卖出组）
+    也要清，否则关掉卖出监测后旧哨兵位一直悬着。
+    """
+    prefix = f"{asset['key']}:"
+    valid = {f"{prefix}{g['suffix']}:{t}" for g in asset["groups"] for t in g["targets"]}
+    for stale in [k for k in analyze_prev_sides if k.startswith(prefix) and k not in valid]:
+        del analyze_prev_sides[stale]
+
+
 def _reach_line(t, dist, reached, side="buy", indent=0):
     """目标距离行。reached=True 时在文末追加彩色字体 buy/sale 标注方向。
     side="buy"  → 价格已跌破目标(到价买入)  → 绿色 buy
@@ -588,6 +601,7 @@ def run_loop(cfg):
                 a = analyze(mp, prev.get(gkey), g["targets"], gkey, cfg)
                 results.append((g, a, mp, buy, sell))
                 prev[gkey] = mp
+            _gc_stale_targets(asset)
             if not results:
                 intervals.append(cfg["normal_interval"])
                 continue
@@ -623,6 +637,7 @@ def run_once(cfg, save=True):
             gkey = f"{asset['key']}:{g['suffix']}"
             a = analyze(mp, None, g["targets"], gkey, cfg)
             results.append((g, a, mp, buy, sell))
+        _gc_stale_targets(asset)
         if not results:
             continue
         content = build_asset_content(asset, raw_price, date, results, cfg, extra,
