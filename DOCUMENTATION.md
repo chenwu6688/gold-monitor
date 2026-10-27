@@ -110,8 +110,8 @@
 - **取数函数**：`get_intl_gold_price()`（新浪伦敦金+汇率换算，主数据源）；`get_cmb_base_price()`（招行公开行情 `api/rate/gold` 取 Au99.99，仅供国内参考行）。
 - **口径**：招行纸黄金(黄金账户)无独立公开实时行情接口；程序取国际换算基准 ± 点差得到**买卖双价**：买入价(银行卖你=你的买入成本) = 基准 + `cmb_spread`，卖出价(银行买你=你的卖出回收) = 基准 − `cmb_spread`。实测招行黄金账户点差约 5 元/克（App 显示 买入价 973.18 / 卖出价 968.18），故 `cmb_spread = 5 ÷ 2 = 2.5`。
 - **推送内容**：一次播报含 基准（国际现货）+ 国内参考 Au99.99 + 买卖双价 + 两组目标。
-- **双向目标监测**：两组独立目标 —— 【买入组】`cmb_target_prices`(默认 880/900) 用**买入价**触发"跌破买入"提醒；【卖出组】`cmb_target_prices_sell`(默认空) 用**卖出价**触发"涨到卖出"提醒。两组各自穿越检测、互不干扰。
-- **可配置标签**：`cmb_gold_label`（买入/卖出价前缀，默认"招行黄金"）与 `cmb_account_label`（基准行账户名，默认"黄金账户"）均可配置，对应不同银行的黄金产品。
+- **双向目标监测**：两组独立目标 —— 【买入组】`cmb_target_prices`(默认 700/750/800) 用**买入价**触发"跌破买入"提醒；【卖出组】`cmb_target_prices_sell`(默认空) 用**卖出价**触发"涨到卖出"提醒。两组各自穿越检测、互不干扰。
+- **可配置标签**：`cmb_gold_label`（买入/卖出价前缀，默认"黄金"）与 `cmb_account_label`（基准行账户名，默认"黄金账户"）均可配置，对应不同银行的黄金产品。
 - **校准**：若 App 显示买卖价与 `基准 ± 2.5` 不符，调 `cmb_spread` 即可（国际口径基准与国内 Au99.99 有约 2 元/克差属正常）。
 
 > 数据源为**免费 + 分钟级延迟**：精度不及付费实时行情，用于趋势感知与到价提醒足够；重大实盘操作以券商/银行终端为准。
@@ -183,7 +183,7 @@ python3 gold_monitor.py --loop
 |---|---|---|
 | GitHub Actions 定时运行 | ✅ | Run #5 成功，commit `344b4b5` |
 | 国际现货(伦敦金)换算基准取数 | ✅ | 新浪 `hf_XAU` × `fx_susdcny` ÷ 31.1035 |
-| 多目标 (880/900) 穿越检测 | ✅ | 算法自测 PASS + 真实推送验证 |
+| 多目标 (700/750/800) 穿越检测 | ✅ | 算法自测 PASS + 真实推送验证 |
 | WxPusher 微信推送 | ✅ | 微信已收到播报 |
 | SSH 鉴权（本机 push） | ✅ | `git push` 走 `git@github.com:...` |
 | 免 PAT（安全） | ✅ | 已迁移 SSH，旧 PAT 可 Revoke |
@@ -196,11 +196,11 @@ python3 gold_monitor.py --loop
 ### 7.1 修改目标金价
 
 **方式 A（推荐，不碰代码）**：GitHub 仓库 → Settings → Secrets and variables → Actions → Variables 标签：
-- 编辑 `CMB_TARGET_PRICES`（【买入组】目标，用买入价触发跌破提醒）→ 如 `860,880,900`
+- 编辑 `CMB_TARGET_PRICES`（【买入组】目标，用买入价触发跌破提醒）→ 如 `700,750,800`
 - 编辑 `CMB_TARGET_PRICES_SELL`（【卖出组】目标，用卖出价触发涨到提醒，如 `1000`；空 = 不监测卖出）
 - 编辑 `TARGET_PRICES`（兜底目标，仅当 `CMB_TARGET_PRICES` 未配置时生效）
 - 编辑 `CMB_SPREAD`（招行点差偏移，默认 2.5 = 实测点差 5元/克 ÷ 2）
-- 编辑 `CMB_GOLD_LABEL`（买入/卖出价前缀，默认 `招行黄金`；监测别行改 `工行黄金`/`建行黄金` 等）
+- 编辑 `CMB_GOLD_LABEL`（买入/卖出价前缀，默认 `黄金`；可改成 `工行黄金`/`建行黄金` 等）
 - 编辑 `CMB_ACCOUNT_LABEL`（基准行账户名，默认 `黄金账户`；改 `积存金`/`账户贵金属` 等对应不同产品名）
 → Save。下次运行自动生效。
 
@@ -258,7 +258,7 @@ TARGET_PRICES=970 python3 gold_monitor.py --once
 | GitHub PAT（`gold-monitor`） | 建议 Revoke | 已迁移 SSH，本机 push 不再需要；可删 |
 | SSH 密钥 | 在用 | 绑定本机，未来 push 直接用 |
 | WxPusher 凭证 | Secrets 隔离 | 仅存 GitHub Secrets，不进代码/历史 |
-| 仓库可见性 | public | Actions 免费无限；目标价 880/900 公开无碍 |
+| 仓库可见性 | public | Actions 免费无限；目标价 700/750/800 公开无碍 |
 | `config.json` | gitignore | 真实凭证不入库 |
 
 **凭证管理建议**：
@@ -298,7 +298,7 @@ TARGET_PRICES=970 python3 gold_monitor.py --once
 | `wxpusher_app_token` | `""` | WxPusher 应用 token |
 | `wxpusher_uids` | `[]` | WxPusher 接收 UID 列表 |
 | `cmb_spread` | `2.5` | 招行点差偏移（元/克）：基准 ± 此值 = 招行买卖双价 |
-| `cmb_gold_label` | `"招行黄金"` | 买入/卖出价前缀（可改 `工行黄金`/`建行黄金` 等，对应不同银行产品） |
+| `cmb_gold_label` | `"黄金"` | 买入/卖出价前缀（可改 `工行黄金`/`建行黄金` 等，对应不同银行产品） |
 | `cmb_account_label` | `"黄金账户"` | 基准行账户名（可改 `积存金`/`账户贵金属` 等，对应不同银行产品名） |
 | `quiet_normal` | `false` | 平时层是否静默 |
 

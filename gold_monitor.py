@@ -59,12 +59,12 @@ PUSH_TITLE = "金价监测"   # 统一推送标题名称（📊 播报 / ⚠️ 
                           # 只有"国内参考 Au99.99"那一行才是国内报价。
 
 DEFAULT_CONFIG = {
-    "target_prices": [880.0, 900.0],     # 国内金价 (SGE Au99.99) 目标（元/克）
+    "target_prices": [700.0, 750.0, 800.0],     # 国内金价 (SGE Au99.99) 目标（元/克）
     "target_price": 950.0,               # 单目标兼容（多目标优先）
-    "cmb_target_prices": [880.0, 900.0], # 招行纸黄金【买入组】目标（跌破买入价提醒，元/克）
-    "cmb_target_prices_sell": [],        # 招行纸黄金【卖出组】目标（涨到卖出价提醒，元/克；空=不监测卖出）
-    "cmb_spread": 2.5,                   # 招行黄金账户点差偏移（元/克）= 实测点差(5元)/2
-    "cmb_gold_label": "招行黄金",        # 买入/卖出价前缀（可改成工行黄金/建行黄金等，对应不同银行产品）
+    "cmb_target_prices": [700.0, 750.0, 800.0], # 【买入组】目标（跌破买入价提醒，元/克）
+    "cmb_target_prices_sell": [],        # 【卖出组】目标（涨到卖出价提醒，元/克；空=不监测卖出）
+    "cmb_spread": 2.5,                   # 黄金账户点差偏移（元/克）= 实测点差(5元)/2
+    "cmb_gold_label": "黄金",            # 买入/卖出价前缀（留空则整段前缀不显示）
     "cmb_account_label": "黄金账户",      # 基准行账户名（可改成积存金/账户贵金属等）
     "threshold_pct": 0.01,               # 距任一目标 1% 内 → 进入高频采样层
     "hit_pct": 0.001,                    # 视为"到达"的容差带（0.1%）
@@ -137,7 +137,7 @@ def build_assets(cfg):
     return [
         {
             "key": "cmb_paper_gold",
-            "name": "招行纸黄金 (黄金账户)",
+            "name": "纸黄金 (黄金账户)",
             "display_label": cfg["cmb_account_label"],   # 日志用账户名（如「黄金账户」）
             "source": "intl",
             "mode": "dual",
