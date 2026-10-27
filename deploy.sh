@@ -2,11 +2,15 @@
 #
 # 黄金价格监测 · GitHub Actions 一键部署脚本（Ubuntu / Linux）
 # 用法：
-#   ./deploy.sh <GITHUB_PAT> [仓库名] [public|private]
+#   ./deploy.sh [仓库名] [public|private]
 # 例：
-#   ./deploy.sh github_pat_xxxx gold-monitor public
+#   ./deploy.sh gold-monitor public
 #
-# 不传参数则交互式询问。仓库部署通过 GitHub Secrets 注入 WxPusher 凭证，
+# 登录支持两种方式，优先 gh：
+#   1) 已登录 gh  → 直接复用，无需再传 PAT
+#   2) 未登录 gh  → 交互式提示粘贴 PAT，仅用于 gh 登录，绝不写入 git remote
+#
+# 仓库部署通过 GitHub Secrets 注入 WxPusher 凭证，
 # 不会把微信凭证写进仓库（安全）。本地调试用的 config.json 已在包内，已 .gitignore 排除。
 #
 set -euo pipefail
@@ -22,20 +26,8 @@ cd "$SCRIPT_DIR"
 echo -e "${Y}工作目录: $SCRIPT_DIR${N}"
 
 # ---------- 1. 取参数 ----------
-PAT="${1:-}"
-REPO="${2:-gold-monitor}"
-VIS="${3:-public}"
-
-if [ -z "$PAT" ]; then
-  read -rsp "请输入 GitHub PAT（github_pat_xxx 或 ghp_xxx）: " PAT; echo
-fi
-if [ -z "$PAT" ]; then
-  echo -e "${R}未提供 PAT，退出。${N}"; exit 1
-fi
-
-# 推断用户名
-USER_NAME="$(echo "$PAT" | grep -oE 'github_pat_[A-Za-z0-9]' >/dev/null && echo "" || echo "")"
-# 用户名稍后由 gh 自动识别
+REPO="${1:-gold-monitor}"
+VIS="${2:-public}"
 
 # ---------- 2. 依赖检查 ----------
 echo -e "${Y}[1/6] 检查依赖...${N}"
@@ -47,10 +39,19 @@ done
 echo -e "${G}  git/gh/python3 就绪${N}"
 
 # ---------- 3. gh 登录 ----------
-echo -e "${Y}[2/6] 登录 gh ...${N}"
-printf '%s\n' "$PAT" | gh auth login --with-token 2>&1 | tail -3 || {
-  echo -e "${R}gh 登录失败（检查 PAT 是否有效/可访问 api.github.com）${N}"; exit 1
-}
+echo -e "${Y}[2/6] 检查 gh 登录态...${N}"
+if gh auth status >/dev/null 2>&1; then
+  echo -e "${G}  已登录，复用现有凭据${N}"
+else
+  read -rsp "请输入 GitHub PAT（github_pat_xxx 或 ghp_xxx，仅用于 gh 登录）: " PAT; echo
+  if [ -z "${PAT:-}" ]; then
+    echo -e "${R}未提供 PAT，退出。${N}"; exit 1
+  fi
+  printf '%s\n' "$PAT" | gh auth login --with-token 2>&1 | tail -3 || {
+    echo -e "${R}gh 登录失败（检查 PAT 是否有效/可访问 api.github.com）${N}"; exit 1
+  }
+  unset PAT   # 用完立刻清掉，不留内存/环境变量
+fi
 OWNER="$(gh api user --jq .login)"
 echo -e "${G}  已登录为: $OWNER${N}"
 
@@ -61,7 +62,7 @@ if gh repo view "$FULL" >/dev/null 2>&1; then
   echo -e "${G}  仓库已存在，跳过创建${N}"
 else
   VIS_FLAG="--private"; [ "$VIS" = "public" ] && VIS_FLAG="--public"
-  gh repo create "$REPO" $VIS_FLAG --description "黄金价格监测（SGE Au99.99 实时价 + WxPusher 推送）" 2>&1 | tail -2 || {
+  gh repo create "$REPO" $VIS_FLAG --description "GitHub Actions 定时监测国际金价换算人民币/克，穿越目标价位推送微信提醒（WxPusher）" 2>&1 | tail -2 || {
     echo -e "${R}创建仓库失败（可能重名或网络问题）${N}"; exit 1
   }
   echo -e "${G}  仓库已创建（$VIS）${N}"
@@ -84,8 +85,12 @@ fi
 git branch -M main
 
 echo -e "${Y}[5/6] 推送到 GitHub...${N}"
-# 用 PAT 作为凭据，避免交互
-git -c credential.helper="" push -u "https://$OWNER:$PAT@github.com/$FULL.git" main 2>&1 | tail -5 || {
+# 让 git 复用 gh 的登录态：凭据由 credential helper 提供，
+# remote URL 里不带任何 token（把 PAT 塞进 URL 会写进 .git/config 明文留存，
+# 一旦 PAT 过期，之后所有 push 都会报 Invalid username or token）。
+gh auth setup-git
+git remote set-url origin "https://github.com/$FULL.git"
+git push -u origin main 2>&1 | tail -5 || {
   echo -e "${R}推送失败（检查仓库名/网络/仓库权限）${N}"; exit 1
 }
 echo -e "${G}  推送成功 ✅${N}"
@@ -107,9 +112,11 @@ echo -e "  点 [New repository secret] 添加："
 echo -e "    ${B}WXPUSHER_APP_TOKEN${N} = ${G}AT_你的token${N}"
 echo -e "    ${B}WXPUSHER_UIDS${N}      = ${G}UID_你的uid${N}"
 echo -e "  点 [Variables] 标签 → [New repository variable] 添加："
-echo -e "    ${B}TARGET_PRICES${N}      = ${G}880,900${N}"
+echo -e "    ${B}CMB_TARGET_PRICES${N}      = ${G}880,900${N}          ${Y}# 买入组：价格跌破即提醒${N}"
+echo -e "    ${B}CMB_TARGET_PRICES_SELL${N} = ${G}1000,1200${N}        ${Y}# 卖出组：价格涨到即提醒${N}"
 echo ""
 echo -e "配置完到 Actions 页面手动 Run workflow 一次，微信收到金价播报即成功。"
-echo -e "之后关掉电脑也照常每 15 分钟监测，金价穿越 880/900 弹 ⚠️ 提醒。"
+echo -e "之后关掉电脑也照常监测。${R}注意：${N}GitHub 免费仓库的 schedule 会被大幅排队，"
+echo -e "实测触发间隔中位数约 4~5 小时，不是分钟级；要分钟级请本地跑 ${B}--loop${N} 或部署到云函数。"
 echo ""
-echo -e "${R}安全提醒：本次 PAT 已使用，建议用完去 GitHub → Settings → Developer settings 吊销。${N}"
+echo -e "${R}安全提醒：若本次粘贴过 PAT，用完请去 GitHub → Settings → Developer settings 吊销。${N}"

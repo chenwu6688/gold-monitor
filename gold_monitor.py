@@ -335,6 +335,7 @@ def analyze(price, prev_price, targets, key, cfg):
         change_pct = change / prev_price * 100.0
 
     hits = []
+    hit_dirs = {}      # 目标位 -> "up"/"down"，记录这次是上穿还是下穿
     any_in_band = False
     for t in targets:
         dist_pct = (price - t) / t * 100.0
@@ -347,6 +348,7 @@ def analyze(price, prev_price, targets, key, cfg):
         hit = prev is not None and prev != side   # 穿越目标位（上穿或下穿）
         if hit:
             hits.append(t)
+            hit_dirs[t] = "up" if side == "above" else "down"
         analyze_prev_sides[state_key] = side
 
     interval = cfg["high_freq_interval"] if any_in_band else cfg["normal_interval"]
@@ -356,6 +358,7 @@ def analyze(price, prev_price, targets, key, cfg):
         "targets": targets,
         "dists": {t: (price - t) / t * 100.0 for t in targets},
         "hits": hits,
+        "hit_dirs": hit_dirs,
         "any_in_band": any_in_band,
         "interval": interval,
         "layer": layer,
@@ -487,13 +490,61 @@ def build_asset_content(asset, raw_price, date, results, cfg, extra=None):
     return "\n".join(lines)
 
 
+# 每组的"机会方向"：买入组要价格跌下来才有买入机会，卖出组要涨上去才有卖出机会。
+# 反向穿越（买入组上穿 / 卖出组下穿）说明机会窗口关闭，必须换一套文案，
+# 否则会出现"买入价上穿 880"却提示"已跌破目标位 880，可考虑买入"的错误信号。
+_OPPORTUNITY_DIR = {"buy": "down", "sell": "up"}
+
+
 def _hit_suffix(g, a):
-    hit_list = "、".join(f"{t:.2f}" for t in a["hits"])
+    """按穿越方向生成到价提醒文案。"""
+    dirs = a.get("hit_dirs") or {}
+    want = _OPPORTUNITY_DIR.get(g["side"])
+
+    def fmt(ts):
+        return "、".join(f"{t:.2f}" for t in ts)
+
+    good, bad = [], []      # good=出现机会的方向，bad=机会关闭的方向
+    up, down = [], []       # 无方向语义的单一价组，直接按上下穿描述
+    for t in a["hits"]:
+        d = dirs.get(t)
+        if want is None:
+            (up if d == "up" else down).append(t)
+        else:
+            (good if d == want else bad).append(t)
+
+    out = []
     if g["side"] == "buy":
-        return f"\n\n> ⚠️ **买入价已跌破目标位 {hit_list}** 元/克，可考虑买入。"
+        if good:
+            out.append(f"> ⚠️ **买入价已跌破目标位 {fmt(good)}** 元/克，可考虑买入。")
+        if bad:
+            out.append(f"> ℹ️ 买入价已上穿目标位 {fmt(bad)} 元/克（价格回升，买入窗口关闭）。")
     elif g["side"] == "sell":
-        return f"\n\n> ⚠️ **卖出价已突破目标位 {hit_list}** 元/克，可考虑卖出。"
-    return f"\n\n> ⚠️ 价格已穿越目标位 **{hit_list}** 元/克，请关注操作。"
+        if good:
+            out.append(f"> ⚠️ **卖出价已突破目标位 {fmt(good)}** 元/克，可考虑卖出。")
+        if bad:
+            out.append(f"> ℹ️ 卖出价已跌破目标位 {fmt(bad)} 元/克（价格回落，卖出窗口关闭）。")
+    if up:
+        out.append(f"> ⚠️ 价格已上穿目标位 **{fmt(up)}** 元/克，请关注操作。")
+    if down:
+        out.append(f"> ⚠️ 价格已下穿目标位 **{fmt(down)}** 元/克，请关注操作。")
+    if not out:
+        return ""
+    return "\n\n" + "\n".join(out)
+
+
+def _has_opportunity(hit_parts):
+    """hit_parts 里是否存在"出现操作机会"的穿越（买入组下穿 / 卖出组上穿）。
+
+    只用于决定推送标题的严重级别：机会关闭这类信息不该报成 ⚠️。
+    """
+    for g, a in hit_parts:
+        want = _OPPORTUNITY_DIR.get(g["side"])
+        dirs = a.get("hit_dirs") or {}
+        for t in a["hits"]:
+            if want is None or dirs.get(t) == want:
+                return True
+    return False
 
 
 # ----------------------------------------------------------------------------
@@ -527,7 +578,8 @@ def run_loop(cfg):
             hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
             if hit_parts:
                 suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
-                push(cfg, f"⚠️ {PUSH_TITLE} 到达目标位", content + suffix)
+                mark = "⚠️" if _has_opportunity(hit_parts) else "ℹ️"
+                push(cfg, f"{mark} {PUSH_TITLE} 到达目标位", content + suffix)
             elif not cfg.get("quiet_normal", False):
                 push(cfg, f"📊 {PUSH_TITLE} 播报", content)
             for g, a, mp, _, _ in results:
@@ -559,7 +611,8 @@ def run_once(cfg, save=True):
         hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
         if hit_parts:
             suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
-            push(cfg, f"⚠️ {PUSH_TITLE} 到达目标位（单次）", content + suffix)
+            mark = "⚠️" if _has_opportunity(hit_parts) else "ℹ️"
+            push(cfg, f"{mark} {PUSH_TITLE} 到达目标位（单次）", content + suffix)
         else:
             push(cfg, f"📊 {PUSH_TITLE} 播报（单次）", content)
     if save:
@@ -588,6 +641,41 @@ def run_test():
     print("期望触发      :", expected_hits)
     print("采样层        :", layers)
     print("期望采样层    :", expected_layers)
+
+    # --- 方向文案校验：穿越方向必须决定文案 ---
+    # 场景 1（真实配置）：买入组目标 880 在价格上方，价格从 860 反弹上穿 880。
+    # 这是"离买入机会更远了"，绝不能说成"已跌破可买入"。
+    # 场景 2：卖出组目标 880，价格从 900 跌回 875，卖出窗口关闭，不能说成"已突破可卖出"。
+    reset_state()
+    c2 = dict(DEFAULT_CONFIG)
+    buy_g = {"side": "buy", "suffix": "buy", "label": "买入"}
+    sell_g = {"side": "sell", "suffix": "sell", "label": "卖出"}
+
+    analyze(860.0, None, [880.0], "t:buy", c2)
+    txt_buy_up = _hit_suffix(buy_g, analyze(885.0, None, [880.0], "t:buy", c2))
+
+    analyze(885.0, None, [880.0], "t:buy2", c2)
+    txt_buy_down = _hit_suffix(buy_g, analyze(870.0, None, [880.0], "t:buy2", c2))
+
+    analyze(900.0, None, [880.0], "t:sell", c2)
+    txt_sell_down = _hit_suffix(sell_g, analyze(875.0, None, [880.0], "t:sell", c2))
+
+    analyze(860.0, None, [880.0], "t:sell2", c2)
+    txt_sell_up = _hit_suffix(sell_g, analyze(885.0, None, [880.0], "t:sell2", c2))
+
+    dir_ok = (
+        "上穿" in txt_buy_up and "可考虑买入" not in txt_buy_up
+        and "跌破" in txt_buy_down and "可考虑买入" in txt_buy_down
+        and "跌破" in txt_sell_down and "可考虑卖出" not in txt_sell_down
+        and "突破" in txt_sell_up and "可考虑卖出" in txt_sell_up
+    )
+    print("买入组上穿文案:", txt_buy_up.replace("\n", " ").strip())
+    print("买入组下穿文案:", txt_buy_down.replace("\n", " ").strip())
+    print("卖出组下穿文案:", txt_sell_down.replace("\n", " ").strip())
+    print("卖出组上穿文案:", txt_sell_up.replace("\n", " ").strip())
+    print("方向文案      :", "PASS ✅" if dir_ok else "FAIL ❌")
+
+    ok = ok and dir_ok
     print("RESULT:", "PASS ✅" if ok else "FAIL ❌")
     return ok
 
