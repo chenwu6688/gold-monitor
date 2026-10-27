@@ -294,7 +294,10 @@ def reset_state():
     _meta.clear()
 
 
-def load_state(path=STATE_PATH):
+def load_state(path=None):
+    # 注意：这里必须运行时读取模块级 STATE_PATH，不能写成默认参数 path=STATE_PATH。
+    # 默认参数在函数定义时就已绑定，云函数（index.py）导入后改 gm.STATE_PATH 将完全失效。
+    path = path or STATE_PATH
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -308,7 +311,8 @@ def load_state(path=STATE_PATH):
         analyze_prev_sides.clear()
 
 
-def save_state(path=STATE_PATH):
+def save_state(path=None):
+    path = path or STATE_PATH
     try:
         out = dict(analyze_prev_sides)
         out["__meta__"] = _meta

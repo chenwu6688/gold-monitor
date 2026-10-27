@@ -90,8 +90,8 @@
 | `config.example.json` | 配置模板（可提交） | 否（占位符） |
 | `config.json` | 本地调试配置（含真实凭证） | **是，已被 .gitignore 排除** |
 | `.github/workflows/gold-monitor.yml` | GitHub Actions 定时任务定义 | 否 |
-| `requirements.txt` | Python 依赖（akshare + requests） | 否 |
-| `state.json` | 穿越检测状态（运行时生成，已 gitignore） | 否 |
+| `requirements.txt` | Python 依赖（只需 requests；akshare 非默认，仅 SGE 分支需要） | 否 |
+| `state.json` | 穿越检测状态（运行时生成，**必须入库并由 workflow 提交**） | 否 |
 | `README_GITHUB.md` | 部署说明（首次部署用） | 否 |
 | `deploy_guide.md` | 腾讯云 SCF 部署说明（备用） | 否 |
 | `deploy.sh` | 一键部署脚本（首次部署用） | 否 |
@@ -122,6 +122,7 @@
 - 对每个目标记录上一次价格"方位"（above / below）。
 - **穿越** = 本次方位与上次不同（上穿或下穿）→ 触发一次提醒（防抖动刷屏，同一侧只提醒一次）。
 - 状态持久化到 `state.json`，使 GitHub Actions（每次新进程）也能跨运行检测穿越。
+  **该文件必须提交回仓库**：被 gitignore 忽略时，每次 checkout 都是空状态，到价提醒永远不会触发；同时仓库会因长期无提交被 GitHub 判定 `disabled_inactivity` 自动停掉定时任务。
 
 ### 4.3 两层采样
 

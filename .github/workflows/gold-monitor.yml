@@ -3,11 +3,9 @@ name: 黄金价格监测
 # 定时触发：跑在 GitHub 服务器上，关掉自己电脑也照常运行
 on:
   schedule:
-    # 每 15 分钟运行一次（GitHub 用 UTC，但频率与北京时间一致）
-    # 频率取舍：
-    #   */10  → 最及时（private 仓库可能超免费额度，建议 public 仓库）
-    #   */15  → 默认（private 月度约略超 2000 分钟免费额度，小额或设 public）
-    #   */30  → 最省，稳在免费额度内（到价提醒最多延迟 30 分钟）
+    # 每 15 分钟「请求」运行一次。注意 GitHub 的 schedule 是 best-effort：
+    # 免费 public 仓库会被排队降级，实测中位间隔约 4~5 小时，不是准点闹钟。
+    # 需要分钟级精度请改用本地 --loop 或云函数定时触发器。
     - cron: '*/15 * * * *'
   workflow_dispatch: {}   # 允许在 Actions 页面手动点一下测试
 
@@ -27,7 +25,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -51,6 +49,29 @@ jobs:
         run: |
           git config user.name "gold-bot"
           git config user.email "gold-bot@users.noreply.github.com"
-          git add state.json 2>/dev/null || true
+
+          # state.json 必须入库：穿越检测靠它记住「上次价格在目标位哪一侧」。
+          # 每次 checkout 都是全新工作区，不提交就等于每次从零开始，到价提醒永远不会触发。
+          if [ -f state.json ]; then
+            git add state.json
+          fi
           git commit -m "chore: update gold monitor state" || echo "no state change"
-          git push
+
+          # 保活：仓库连续 60 天无提交会被 GitHub 自动禁用 schedule（disabled_inactivity）。
+          # state 只在价格穿越时才变化，可能几十天无差异，故超过 45 天无提交就补一个空提交。
+          if [ -z "$(git log -1 --since='45 days ago' --format=%H)" ]; then
+            git commit --allow-empty -m "chore: keepalive (avoid disabled_inactivity)"
+          fi
+
+          # 推送失败（与本机 commit 撞车）时重试，避免这一轮状态丢失。
+          # 三次都失败必须让这一步变红——静默失败正是本次事故的根源。
+          pushed=0
+          for i in 1 2 3; do
+            if git push; then pushed=1; break; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          if [ "$pushed" -ne 1 ]; then
+            echo "::error::state.json 推送失败，本轮穿越状态未持久化"
+            exit 1
+          fi

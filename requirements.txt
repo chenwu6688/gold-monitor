@@ -1,2 +1,5 @@
-akshare>=1.18
 requests>=2.28
+# 说明：主链路只需要 requests。
+# akshare 仅服务于 get_sge_price()（上金所 Au99.99 直取分支），而唯一资产 source="intl"，
+# 该分支当前不启用，故不再默认安装（akshare 会额外拉入 pandas/numpy 等约 250MB）。
+# 如需启用 source="sge"：pip install "akshare>=1.18"，并把 build_assets() 的 source 改回 "sge"。

@@ -9,6 +9,8 @@ import gold_monitor as gm
 
 # 云函数无状态：把穿越检测状态持久化到 /tmp。SCF 会复用 warm 实例，
 # 实例复用期间状态有效，绝大多数个人监测场景足够。
+# 注意：load_state/save_state 在运行时读取模块级 STATE_PATH，这里的赋值才真正生效
+# （若把 STATE_PATH 写进函数签名的默认参数，则此赋值无效，状态会写到只读的代码目录）。
 # 如需跨实例 100% 可靠，把 STATE_PATH 改成对象存储 COS（见文末可选实现）。
 gm.STATE_PATH = "/tmp/gold_state.json"
 

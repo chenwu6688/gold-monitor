@@ -1,109 +1,116 @@
 <div align="center">
 
-# 🥇 黄金价格监测 · 多目标版
+# 🥇 黄金价格监测 · 多目标双向版
 
-**用 GitHub Actions 定时跑金价监测，关掉电脑也照常弹微信**
+**跑在 GitHub Actions 上的个人金价哨兵：定时取价、穿越目标位就弹微信，关机也不停**
 
 [English](#english-version) · 简体中文
 
 </div>
 
-> **国内金价口径** = 上海黄金交易所 Au99.99 实时报价（元/克），数据源 akshare
-> **默认监测目标位**：880 / 900 元/克，价格穿越主动 ⚠️ 推送
-
 ![Python](https://img.shields.io/badge/python-3.12+-blue?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white)
-![Schedule](https://img.shields.io/badge/cron-every%2015%20min-orange)
+![Schedule](https://img.shields.io/badge/cron-*/15（目标，实测受限）-orange)
 ![Push](https://img.shields.io/badge/push-WxPusher-success)
-![Status](https://img.shields.io/badge/status-running-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## ✨ 这是什么？
+## 关于本项目（About）
 
-一个**轻量后端监测任务**（不是完整 App），每 15 分钟在 GitHub 服务器上跑一次：
+### 用途
 
-1. 拉取**国际现货黄金(伦敦金)实时价**换算成人民币/克作为基准（24h 连续，覆盖闭市时段）
-2. 对比多个目标价位（默认 880 / 900 买入价目标）
-3. 价格穿越目标位时，通过 **WxPusher** 主动推送到你的个人微信
-4. 状态自动 commit 回仓库，跨运行不重复提醒
+一个**单文件 Python 监测脚本 + 定时任务**，不是 App、不是交易工具。它只做三件事：
 
-### 核心特性
+1. **取价** —— 抓国际现货黄金（伦敦金 XAU/USD）与在岸美元人民币汇率，换算成 **人民币/克**；
+2. **比价** —— 把实时价和你设的目标价位逐一比较，做**穿越检测**（价格从目标位一侧穿到另一侧）；
+3. **推送** —— 到价时给微信发一条 ⚠️ 提醒，平时发一条 📊 播报。
 
-- 🆓 **完全免费** — 公开仓库 Actions 无限额度
-- 🖥 **零运维** — GitHub 服务器跑，电脑关掉也不影响
-- 🔐 **密钥零泄露** — WxPusher 凭证走 GitHub Secrets，不进代码
-- 🌙 **24h 追踪** — 国际现货黄金基准，上金所闭市后照常跳动，夜间监测不失真
-- 🎯 **单资产 + 多目标 + 双向监测** — 监测【招行纸黄金(黄金账户)买卖双价】；基准=国际现货直接换算，一次播报含**买入组(跌破买入价提醒 880/900)** 与 **卖出组(涨到卖出价提醒，如 1000)** 两组独立目标
-- ⚡ **智能采样** — 接近目标时 10 分钟一次，平时 2 小时一次
-- 🔌 **多渠道推送** — WxPusher / 企业微信 / PushPlus 可同时启用
+解决的痛点：不想 24 小时盯盘、不想装来路不明的行情 App、不想为了一个定时脚本买服务器、不想让自己电脑常开。适合**个人在固定价位分批买入/卖出**的场景（例如"跌破 880 提醒我加仓""涨到 1000 提醒我出货"）。
 
----
+### 主要功能特性
 
-## 🚀 快速开始（5 分钟）
+| 特性 | 说明 |
+|---|---|
+| 🌙 **24h 不断价** | 基准取国际现货（伦敦金），覆盖上金所闭市时段，避免闭市后基准冻结失真 |
+| 🇨🇳 **国内口径对照** | 同时展示国内 Au99.99 参考价（招行公开行情接口），方便核对国际/国内价差 |
+| 🔁 **买卖双价** | 基准 ± `cmb_spread`（默认 2.5）→ 买入价（银行卖你）/ 卖出价（银行买你回收），贴合招行黄金账户实际报价 |
+| 🎯 **双向多目标** | 【买入组】用买入价，跌破即提醒（默认 880/900）；【卖出组】用卖出价，涨到即提醒（如 1000）。两组独立穿越检测、互不干扰 |
+| 🧠 **两层采样** | 距任一目标 ≤1% 进高频层（600s），否则平时层（7200s）。`--loop` 常驻模式下生效 |
+| 🔔 **多渠道推送** | WxPusher（个人微信）/ 企业微信机器人 / PushPlus / 控制台，可同时启用 |
+| 🔐 **凭证零入库** | 全部走 GitHub Secrets / 环境变量注入；本地 `config.json` 已被 `.gitignore` 排除 |
+| 🧪 **自带自检** | `--test` 不依赖网络，直接校验穿越检测与分层算法 |
+| ☁️ **三种载体** | GitHub Actions（主）/ 本地常驻 / 腾讯云 SCF 云函数（备选，见 `index.py`） |
 
-### 1. 准备 WxPusher 凭证
-访问 [wxpusher.zjiecode.com](https://wxpusher.zjiecode.com) 注册并创建应用，拿到：
-- `appToken`（格式 `AT_xxx`）
-- `UID`（格式 `UID_xxx`，扫码关注你的应用获取）
+### 运行方式
 
-### 2. 推送代码到你的 GitHub 仓库
+| 方式 | 命令 / 触发 | 适用场景 | 说明 |
+|---|---|---|---|
+| **GitHub Actions**（主） | `cron: */15` + 手动 `Run workflow` | 长期无人值守 | 免费、关机照跑；频率受 GitHub 调度限制（见「已知限制」） |
+| 本地常驻 | `python3 gold_monitor.py --loop` | 想按 10 分钟/2 小时真正采样 | 进程活着才有效，`quiet_normal` 在此模式生效 |
+| 本地单次 | `python3 gold_monitor.py --once` | 手动看一眼 / 调试推送样式 | 每次新进程，依赖 `state.json` 做跨运行穿越检测 |
+| 算法自检 | `python3 gold_monitor.py --test` | 改代码后验证逻辑 | 不联网，输出 PASS/FAIL |
+| 腾讯云 SCF | `index.py` 的 `main_handler` + 定时触发器 | 想脱离 GitHub 限流 | ⚠️ 当前状态覆盖有缺陷，见「已知限制」 |
+
+### 使用说明
+
+**① 拿 WxPusher 凭证**
+到 [wxpusher.zjiecode.com](https://wxpusher.zjiecode.com) 注册 → 创建应用 → 得到 `appToken`（`AT_xxx`）→ 扫码关注应用拿到 `UID`（`UID_xxx`）。
+
+**② 把代码推到自己的仓库**
+
 ```bash
-# 在本项目目录
-git init
-git add .
-git commit -m "init gold monitor"
+git init && git add . && git commit -m "init gold monitor"
 git remote add origin git@github.com:<你的用户名>/<仓库名>.git
-git branch -M main
-git push -u origin main
+git branch -M main && git push -u origin main
 ```
 
-### 3. 在 GitHub 配置 Secrets 和 Variables
-路径：**Settings → Secrets and variables → Actions**
+**③ 配置 Secrets 与 Variables**（仓库 Settings → Secrets and variables → Actions）
 
-**Secrets（敏感凭证）**
+Secrets（敏感）：
 
 | Name | Value |
 |---|---|
 | `WXPUSHER_APP_TOKEN` | `AT_你的appToken` |
 | `WXPUSHER_UIDS` | `UID_你的UID`（多个用逗号分隔） |
 
-**Variables（普通配置）**
+Variables（普通配置，可留空用默认值）：
 
-| Name | Value | 作用 |
+| Name | 默认 | 作用 |
 |---|---|---|
-| `CMB_TARGET_PRICES` | `880,900` | 【买入组】目标（用买入价触发跌破提醒），逗号分隔；不配则沿用 `TARGET_PRICES` |
-| `CMB_TARGET_PRICES_SELL` | （空） | 【卖出组】目标（用卖出价触发涨到提醒），逗号分隔；如 `1000`（空 = 不监测卖出） |
-| `TARGET_PRICES` | `880,900` | 兜底目标（仅当 `CMB_TARGET_PRICES` 未配置时生效） |
-| `CMB_SPREAD` | `2.5` | 招行点差偏移（元/克）：基准 Au99.99 ± 此值 = 招行**买卖双价**（实测点差约 5 元/克，取半 2.5） |
-| `CMB_GOLD_LABEL` | `招行黄金` | 买入/卖出价前缀（可改 `工行黄金`/`建行黄金` 等，对应不同银行的黄金产品） |
-| `CMB_ACCOUNT_LABEL` | `黄金账户` | 基准行账户名（可改 `积存金`/`账户贵金属` 等，对应不同银行的产品名） |
+| `CMB_TARGET_PRICES` | `880,900` | 【买入组】目标，用**买入价**触发跌破提醒；不配则沿用 `TARGET_PRICES` |
+| `CMB_TARGET_PRICES_SELL` | 空 | 【卖出组】目标，用**卖出价**触发涨到提醒，如 `1000`；空 = 不监测卖出 |
+| `TARGET_PRICES` | `880,900` | 兜底目标，仅当 `CMB_TARGET_PRICES` 未配时生效 |
+| `CMB_SPREAD` | `2.5` | 点差偏移（元/克）：基准 ± 此值 = 买卖双价。实测点差约 5 元/克，取半 |
+| `CMB_GOLD_LABEL` | `招行黄金` | 买入/卖出价前缀，换银行改这里 |
+| `CMB_ACCOUNT_LABEL` | `黄金账户` | 基准行账户名，如 `积存金` / `账户贵金属` |
 
-### 4. 启用 Workflow
-仓库 **Actions** 页 → 找到「黄金价格监测」→ **Enable workflow**
+**④ 启用 workflow**：仓库 Actions 页 → 「黄金价格监测」→ Enable workflow。
 
-### 5. 手动触发一次
-**Actions → 黄金价格监测 → Run workflow** → 几秒后微信收到金价播报 ✅
+**⑤ 手动跑一次验证**：Actions → Run workflow。控制台/微信收到 📊 播报即成功。
 
-之后每 15 分钟自动跑，到价时弹 ⚠️ 提醒。
+之后到价自动弹 ⚠️。想改目标价，直接在 Variables 里改，下次运行即生效，不用改代码。
+
+### 已知限制（Important）
+
+1. **GitHub 的 cron 不是准点闹钟。** 本仓库设为 `*/15`，但实测近 100 次运行的中位间隔是 **283 分钟**（约 4.7 小时），最短 122 分钟、最长近 10 小时。免费 public 仓库的 schedule 会被大幅降级排队，**不要指望分钟级到价提醒**；要真正的分钟级，用本地 `--loop`、SCF 定时触发器或自建服务器。
+2. **仓库连续 60 天没有提交，GitHub 会自动禁用定时 workflow**（状态 `disabled_inactivity`）。本项目靠每次运行提交 `state.json` 维持活跃度，并在超过 45 天无提交时自动补一个 keepalive 空提交——即便如此，也建议偶尔看一眼 Actions 页确认还活着。
+3. **`state.json` 必须跨运行保留。** 穿越检测依赖它记录"上次价格在目标位的哪一侧"。它已被移出 `.gitignore`，由 workflow 提交回仓库；若换成 `actions/cache`/COS 也行，但绝不能每次全新 checkout。
+4. **数据源是公开免费接口**（新浪 `hq.sinajs.cn`、招行 `m.cmbchina.com`），无 SLA、无备用源，字段或反爬策略随时可能变。
+5. **`akshare` 不再是默认依赖**（已从 `requirements.txt` 移除）。它只服务于未启用的 SGE 分支（`get_sge_price`），主链路只用 `requests`。若要启用 `source="sge"`，自行 `pip install "akshare>=1.18"`。
+6. **`--once` 每次运行都会推一条播报**，`quiet_normal` 只对 `--loop` 生效；cron 真按 15 分钟跑时就是 96 条/天，介意就调大 cron 间隔。
 
 ---
 
 ## 🎯 修改目标金价
 
-**推荐：在 GitHub 网页直接改（免 push）**
+**推荐：GitHub 网页直接改（免 push）** —— Settings → Secrets and variables → Actions → Variables：
 
-**Settings → Secrets and variables → Actions → Variables**
-- `CMB_TARGET_PRICES` —— 【买入组】目标（用买入价触发跌破提醒），如 `850,920,950`
-- `CMB_TARGET_PRICES_SELL` —— 【卖出组】目标（用卖出价触发涨到提醒），如 `1000`；留空 = 不监测卖出
+- `CMB_TARGET_PRICES` —— 【买入组】目标（买入价跌破提醒），如 `850,920,950`
+- `CMB_TARGET_PRICES_SELL` —— 【卖出组】目标（卖出价涨到提醒），如 `1000`；留空 = 不监测卖出
 - `TARGET_PRICES` —— 兜底目标（仅当 `CMB_TARGET_PRICES` 未配置时生效）
 
-保存后**下一次 cron 触发即生效**。
-- `CMB_SPREAD`：调招行点差偏移（默认 2.5 = 实测点差 5元/克 ÷ 2）。
-- `CMB_TARGET_PRICES_SELL`：招行纸黄金**卖出组**目标（如 `1000`），用于"涨到卖出价提醒"；**留空 = 不监测卖出**。买入组 `CMB_TARGET_PRICES`(默认 880/900) 继续负责"跌破买入提醒"，两组独立并存。
-- `CMB_GOLD_LABEL`：买入/卖出价前缀，默认 `招行黄金`；监测别的银行时改成 `工行黄金`/`建行黄金` 等。
-- `CMB_ACCOUNT_LABEL`：基准行账户名，默认 `黄金账户`；改成 `积存金`/`账户贵金属` 等对应不同银行的产品名。
+保存后下一次 cron 触发即生效。`CMB_SPREAD` / `CMB_GOLD_LABEL` / `CMB_ACCOUNT_LABEL` 的含义见上表。
 
 ---
 
@@ -112,53 +119,53 @@ git push -u origin main
 | 渠道 | 适用场景 | 配置位置 | 字段 |
 |---|---|---|---|
 | **WxPusher** ⭐ | 个人微信 | Secrets | `WXPUSHER_APP_TOKEN` + `WXPUSHER_UIDS` |
-| 企业微信机器人 | 公司群自动发 | Secrets | `WECHAT_WEBHOOK` |
+| 企业微信机器人 | 群内自动发 | Secrets | `WECHAT_WEBHOOK` |
 | PushPlus | 微信服务号 | Secrets | `PUSHPLUS_TOKEN` |
 
-> 默认只启用 WxPusher。要同时启用其他渠道，把对应字段加到 Secrets 即可，程序会自动检测并推送。
+> 程序自动检测：字段非空即启用，多个渠道可同时生效。控制台输出始终打印，便于本地调试。
 
 ---
 
 ## 🧠 核心机制
 
 ### 两层采样
+
 | 层级 | 触发条件 | 间隔 | 用途 |
 |---|---|---|---|
-| **平时层** | 距任一目标 > 1% | 2 小时 | 静默期低频播报 |
-| **高频层** | 距任一目标 ≤ 1% | 10 分钟 | 临近目标及时跟踪 |
+| **平时层** | 距任一目标 > 1%（`threshold_pct`） | 7200s | 静默期低频播报 |
+| **高频层** | 距任一目标 ≤ 1% | 600s | 临近目标及时跟踪 |
+
+> 该机制只在 `--loop` 下真正生效。Actions 模式下 cron 定频，代码里的 interval 只体现在推送文案的"下次间隔"提示上。
 
 ### 多目标穿越检测
-对每个目标价位独立追踪"上次方位"（above / below）：
+
+对每个 (资产, 目标组, 目标价) 独立记录"上次方位"（`above` / `below`），存 `state.json`：
+
 - 之前 `below` + 现在 `above` → **上穿** → 弹 ⚠️
 - 之前 `above` + 现在 `below` → **下穿** → 弹 ⚠️
-- 状态存 `state.json` 并自动 commit 回仓库，跨运行不重复提醒
+- 首次运行（无历史状态）不触发提醒，只记录方位
 
 ### 到价标注（一眼看方向）
-价格到目标位时，在**文末**追加彩色字体标注方向（WxPusher 的 Markdown 支持 `<font color>`）：
 
-| 场景 | 末尾彩色字体 | 文案 | 含义 |
+价格到目标位时，在正文对应行追加彩色标注（WxPusher 的 Markdown 支持 `<font color>`）：
+
+| 场景 | 末尾标注 | 文案 | 含义 |
 |---|---|---|---|
-| 价格**跌破**买入目标（用买入价） | `<font color="green">buy</font>` | `**已到价(可买入)**` | 该价位可考虑买入 |
-| 价格**涨到**卖出目标（用卖出价） | `<font color="red">sale</font>` | `**已到价(可卖出)**` | 该价位可考虑卖出 |
-| 远未到价 | （无） | 距离百分比 | 静默参考 |
+| 跌破买入目标（用买入价） | `<font color="green">buy</font>` | `**已到价(可买入)**` | 可考虑买入 |
+| 涨到卖出目标（用卖出价） | `<font color="red">sale</font>` | `**已到价(可卖出)**` | 可考虑卖出 |
+| 远未到价 | 无 | 距离百分比 | 静默参考 |
 
-> 示例：`距 880.00：-1.99% **已到价(可买入)** <font color="green">buy</font>`
+> 示例：`距 880.00：-1.97% **已到价(可买入)** <font color="green">buy</font>`
 
-### 数据源
-**唯一资产 · 招行纸黄金（黄金账户）**（基准 = 国际现货黄金，24h 追踪）
-- **主基准**：国际现货黄金（伦敦金 XAU/USD，新浪 `hf_XAU`）× 美元人民币汇率（新浪 `fx_susdcny`）÷ 31.1035 = 人民币/克，**直接采用不加校准**。**24h 连续交易**，覆盖上金所闭市时段（15:30–21:00、02:30–09:00、周末）。
-- **国内参考行**：推送同时显示国内 Au99.99 参考价（闭市时冻结），仅供对比国际与国内口径差异。
-- **口径**：招行纸黄金(黄金账户)无独立公开实时接口；程序取国际换算基准 ± 点差得到**买卖双价**：
-  - **买入价（银行卖你 = 你的买入成本）= 基准 + cmb_spread**（默认 2.5）
-  - **卖出价（银行买你 = 你的卖出回收）= 基准 − cmb_spread**
-  - 实测招行黄金账户点差约 **5 元/克**（买入价 973.18 / 卖出价 968.18，App 实测），故 `cmb_spread = 5 ÷ 2 = 2.5`
-- **推送首行**：基准行只显示账户名（`cmb_account_label`，默认 `黄金账户`），如 `- **黄金账户** 基准（国际现货）：970.52 元/克`
-- **推送标题**：`📊 国内金价实时行情 播报`（定时/单次一致）
-- **买入/卖出价前缀**：`cmb_gold_label`（默认 `招行黄金`）加在买入价/卖出价前，如 `- **招行黄金 买入价（银行卖你=你买入成本）**：971.00 元/克`
-- **可配置换银行**：监测工行/建行等其他银行黄金产品时，把 `CMB_GOLD_LABEL` 改成 `工行黄金`、`CMB_ACCOUNT_LABEL` 改成 `积存金` 等即可，代码与监测策略无需改动。
-- **双向目标监测**：两组独立目标 —— 【买入组】`cmb_target_prices`(默认 880/900) 用**买入价**触发"跌破买入"提醒；【卖出组】`cmb_target_prices_sell`(默认空) 用**卖出价**触发"涨到卖出"提醒。两组各自穿越检测、互不干扰。
-- **校准**：若你 App 显示的买卖价与 `基准 ± 2.5` 不符，调 `CMB_SPREAD` 即可。
-- **延迟**：国际现货分钟级，24h 实时更新
+### 数据源与价格口径
+
+**唯一资产：招行纸黄金（黄金账户）**，基准 = 国际现货黄金。
+
+- **主基准**：新浪 `hf_XAU`（伦敦金 XAU/USD）× `fx_susdcny`（在岸 USDCNY）÷ 31.1035（1 金衡盎司克数）= 人民币/克，**直接采用，不叠升贴水**。24h 连续交易。
+- **国内参考**：招行 `api/rate/gold` 的 `Au99.99` 报价（无报价时回退 `Au(T+D)` / `Au100g`），仅作对照行，不参与计算。
+- **买卖双价**：`买入价 = 基准 + cmb_spread`、`卖出价 = 基准 − cmb_spread`。招行黄金账户无独立公开实时行情，点差约 5 元/克，故默认取 2.5。
+- **校准**：若你 App 显示的买卖价与 `基准 ± 2.5` 差得多，直接调 `CMB_SPREAD`。
+- **推送首行**：`- **黄金账户** 基准（国际现货）：860.16 元/克（12:54:00）`
 
 ---
 
@@ -166,19 +173,19 @@ git push -u origin main
 
 ```
 gold-monitor/
-├── gold_monitor.py           # 主程序（取数 + 穿越检测 + 推送）
+├── gold_monitor.py           # 主程序（取数 + 穿越检测 + 分层 + 推送）
 ├── index.py                  # 腾讯云 SCF 入口（备选部署）
 ├── config.example.json       # 配置模板
-├── config.json               # 本地真实配置（.gitignore 忽略）
-├── requirements.txt          # Python 依赖
-├── .github/
-│   └── workflows/
-│       └── gold-monitor.yml  # GitHub Actions 定时任务
-├── state.json                # 穿越检测状态（自动 commit）
-├── deploy.sh                 # 一键部署脚本
-├── deploy_guide.md           # 详细部署指南
-├── README.md                 # 本文件（仓库门面）
-└── DOCUMENTATION.md          # 完整项目文档
+├── config.json               # 本地真实配置（.gitignore 忽略，需自建）
+├── requirements.txt          # Python 依赖（只需 requests）
+├── .github/workflows/
+│   └── gold-monitor.yml      # GitHub Actions 定时任务
+├── state.json                # 穿越检测状态（入库，由 workflow 自动提交）
+├── deploy.sh                 # GitHub 一键部署脚本（需 PAT）
+├── deploy_guide.md           # 腾讯云 SCF 部署说明
+├── DOCUMENTATION.md          # 完整项目文档（架构/机制/排障/配置）
+├── LICENSE                   # MIT
+└── README.md                 # 本文件
 ```
 
 ---
@@ -186,37 +193,44 @@ gold-monitor/
 ## 🛠 本地开发
 
 ```bash
-# 安装依赖
-pip install -r requirements.txt
+# 仅需 requests 即可跑主链路；akshare 只服务于未启用的 SGE 分支
+pip install requests
 
-# 算法自测（不依赖网络）
+# 算法自检（不联网）
 python3 gold_monitor.py --test
 
-# 单次运行（读本地 config.json）
+# 单次运行（读同目录 config.json，无则用默认配置）
 python3 gold_monitor.py --once
 
-# 常驻循环（需常开机器）
+# 常驻循环（按两层采样真实变频）
 python3 gold_monitor.py --loop
 ```
 
-调试时复制 `config.example.json` 为 `config.json` 并填入凭证。
+调试推送样式时，把目标价临时改到实时价附近即可触发穿越提醒：
+
+```bash
+CMB_TARGET_PRICES=865 python3 gold_monitor.py --once
+```
+
+配置优先级：`DEFAULT_CONFIG`（代码内默认） < `config.json` < 环境变量。环境变量清单见 [DOCUMENTATION.md 附录 B](DOCUMENTATION.md)。
 
 ---
 
 ## 📈 频率与免费额度
 
-| 仓库类型 | Actions 额度 | 推荐 cron | 到价提醒延迟 |
+| 仓库类型 | Actions 额度 | 建议 cron | 实测表现 |
 |---|---|---|---|
-| **Public** | 无限免费 | `*/10` | ≤ 10 分钟 |
-| **Private** | ~2000 分钟/月 | `*/30` | ≤ 30 分钟 |
+| **Public** | 无限免费 | `*/15` 或更疏 | 名义 15 分钟，实际中位约 4~5 小时一次 |
+| **Private** | ~2000 分钟/月 | `*/30` | 同样受调度降级影响，且更易超额度 |
 
-修改 `.github/workflows/gold-monitor.yml` 的 `cron:` 字段后 push 即可。
+> 单次运行约 30 秒（含安装依赖）。改 `.github/workflows/gold-monitor.yml` 的 `cron:` 后 push 生效。
+> 想要分钟级精度：本地 `--loop`（最可靠）、腾讯云 SCF 定时触发器，或任意一台常开机器 + systemd/cron。
 
 ---
 
 ## 📋 完整文档
 
-深度设计、故障排查、安全 posture、配置字段说明、环境变量覆盖：
+架构图、设计取舍、故障排查表、配置字段全表、安全 posture：
 
 👉 [DOCUMENTATION.md](DOCUMENTATION.md)
 
@@ -224,12 +238,13 @@ python3 gold_monitor.py --loop
 
 ## ⚠️ 免责声明
 
-本项目仅作**技术学习与个人监测用途**。
+本项目仅作**技术学习与个人价格监测**用途。
 
-- 数据源 `akshare` 为免费行情接口，**分钟级延迟**，实盘以券商/银行终端为准
+- 数据源为免费公开接口，分钟级延迟，实盘以银行/券商终端为准
+- 价格换算存在国际/国内口径差与点差估算误差，**不可作为成交依据**
 - 推送内容**不构成任何投资建议**
-- 公开仓库会暴露监测逻辑（目标价位等），如有隐私需求请用 Private 仓库
-- 仓库作者不对任何投资盈亏负责
+- public 仓库会公开你的目标价位，介意请转 private（并注意额度）
+- 作者不对任何投资盈亏负责
 
 ---
 
@@ -243,10 +258,20 @@ python3 gold_monitor.py --loop
 
 ## English
 
-A lightweight backend job that monitors Shanghai Gold Exchange (SGE) Au99.99 price
-every 15 minutes on GitHub Actions, pushes WeChat alerts via WxPusher when price
-crosses user-defined target levels (default 880 / 900 CNY/g). Multi-target
-crossing detection, two-layer adaptive sampling, zero server cost, zero
-credential leakage (Secrets).
+A single-file Python price watcher that runs as a scheduled GitHub Actions job. It fetches
+spot gold (XAU/USD) and the onshore USD/CNY rate from Sina, converts the price into CNY per gram,
+compares it against user-defined target levels, and pushes WeChat notifications via WxPusher
+(plus WeCom bot / PushPlus / console as optional channels) whenever the price crosses a level.
+
+Key points: 24h international benchmark instead of a closing-time-frozen domestic quote; dual-sided
+buy/sell price derived from `benchmark ± spread`; independent target groups for "buy the dip" and
+"sell the top"; crossing state persisted in `state.json` so a level is alerted only once.
+
+**Usage:** fork/push the repo → set `WXPUSHER_APP_TOKEN` / `WXPUSHER_UIDS` as Secrets →
+optionally set `CMB_TARGET_PRICES` / `CMB_TARGET_PRICES_SELL` as Variables → enable the workflow.
+Local: `python3 gold_monitor.py --once|--loop|--test`.
+
+**Caveat:** GitHub's schedule is best-effort. With `*/15` configured, observed median gap is
+~4.7 hours. For minute-level accuracy, run `--loop` on a always-on host.
 
 Full design docs: [DOCUMENTATION.md](DOCUMENTATION.md)

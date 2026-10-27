@@ -3,4 +3,6 @@ __pycache__/
 run.log
 config.json
 *.zip
-state.json
+# 注意：state.json 不在此忽略——Actions 每次全新 checkout，
+# 它承载穿越检测状态，由 workflow 的 commit 步骤写回仓库。
+# 一旦忽略，到价提醒将永远不触发，且仓库 60 天无提交会被 GitHub 自动禁用。
