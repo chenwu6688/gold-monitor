@@ -291,6 +291,16 @@ analyze_prev_sides = {}
 _meta = {}   # 运行时元数据（存 state.json 的 __meta__ 键，预留扩展）
 
 
+def _bj_now(fmt="%m-%d %H:%M"):
+    """北京时间字符串。
+
+    GitHub runner 默认 UTC，直接用 time.strftime 会比正文里的数据时间（接口返回
+    北京时间）早 8 小时，"较上次（10-27 07:17）"和正文"15:17"对不上。
+    用 epoch +8h 换算，不依赖运行环境的 TZ 设置。
+    """
+    return time.strftime(fmt, time.gmtime(time.time() + 8 * 3600))
+
+
 def reset_state():
     analyze_prev_sides.clear()
     _meta.clear()
@@ -606,7 +616,7 @@ def run_loop(cfg):
                 intervals.append(cfg["normal_interval"])
                 continue
             content = build_asset_content(asset, raw_price, date, results, cfg, extra)
-            _meta["last_base"] = {"p": raw_price, "t": time.strftime("%m-%d %H:%M")}
+            _meta["last_base"] = {"p": raw_price, "t": _bj_now()}
             hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
             if hit_parts:
                 suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
@@ -643,7 +653,7 @@ def run_once(cfg, save=True):
         content = build_asset_content(asset, raw_price, date, results, cfg, extra,
                                       show_sampling=False)
         # 记下本次基准价，供下次运行算"较上次涨跌"（跨进程靠 state.json 的 __meta__）
-        _meta["last_base"] = {"p": raw_price, "t": time.strftime("%m-%d %H:%M")}
+        _meta["last_base"] = {"p": raw_price, "t": _bj_now()}
         hit_parts = [(g, a) for g, a, mp, _, _ in results if a["hits"]]
         if hit_parts:
             suffix = "".join(_hit_suffix(g, a) for g, a in hit_parts)
